@@ -3,24 +3,46 @@ from typing import Dict, List
 
 
 def extract_answer(response: str) -> str:
-    # Try to extract answer from $...$ format first
-    indices = [pos for pos, char in enumerate(response) if char == "$"]
-    if len(indices) <= 1:
-        answer = response
-    else:
-        answer = response[indices[0] + 1 : indices[-1]]
+    """Extract a final AIME integer without grading the reasoning transcript."""
+    if response.rfind("<think>") > response.rfind("</think>"):
+        return ""
 
-    # Extract from \\boxed{} if present
     boxed_answer = last_boxed_only_string(response)
     if boxed_answer is not None:
         try:
             boxed_content = remove_boxed(boxed_answer)
             if boxed_content is not None:
-                answer = boxed_content
+                return boxed_content
         except (AssertionError, IndexError):
             pass
 
-    return answer
+    # Thinking models may emit many inline math spans before a short final answer.
+    # Restrict all non-boxed fallbacks to text after the final reasoning delimiter.
+    final_section = response.rsplit("</think>", 1)[-1]
+
+    answer_matches = re.findall(
+        r"(?i)(?:final\s+answer|answer)\s*(?:is|:|=)\s*"
+        r"(?:\\\(|\\\[|\$|\*\*)*\s*([0-9]{1,3})\b",
+        final_section,
+    )
+    if answer_matches:
+        return answer_matches[-1]
+
+    scalar_math_matches = re.findall(
+        r"\$\s*([0-9]{1,3})\s*\$", final_section
+    )
+    if scalar_math_matches:
+        return scalar_math_matches[-1]
+
+    terminal_integer = re.search(
+        r"(?:^|[=\s])([0-9]{1,3})\s*"
+        r"(?:\$|\\\)|\\\]|\*\*)*\s*[.!。]?\s*$",
+        final_section,
+    )
+    if terminal_integer:
+        return terminal_integer.group(1)
+
+    return ""
 
 
 def extract_all_responses(
