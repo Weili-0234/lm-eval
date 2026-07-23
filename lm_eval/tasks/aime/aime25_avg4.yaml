@@ -1,0 +1,32 @@
+tag:
+  - math_word_problems
+task: aime25_avg4
+dataset_path: math-ai/aime25
+output_type: generate_until
+training_split: test
+fewshot_split: test
+test_split: test
+doc_to_text: "Question: {{problem}}\nAnswer:"
+doc_to_target: "{{answer}}"
+metric_list:
+  - metric: !function utils.avg_at_k
+    aggregation: mean
+    higher_is_better: true
+    k: [4]
+filter_list:
+  - name: "avg_at_4"
+    filter:
+      - function: "custom"
+        filter_fn: !function utils.extract_all_responses
+generation_kwargs:
+  until:
+    - "Question:"
+    - "</s>"
+    - "<|im_end|>"
+    - "<|eot_id|>"
+  do_sample: true
+  max_gen_toks: 32768
+repeats: 4
+num_fewshot: 0
+metadata:
+  version: 0.0

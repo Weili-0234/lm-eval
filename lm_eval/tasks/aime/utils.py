@@ -2,10 +2,7 @@ import re
 from typing import Dict, List
 
 
-def process_results(doc: dict, results: List[str]) -> Dict[str, int]:
-    retval = 0
-    response = results[0]
-
+def extract_answer(response: str) -> str:
     # Try to extract answer from $...$ format first
     indices = [pos for pos, char in enumerate(response) if char == "$"]
     if len(indices) <= 1:
@@ -22,6 +19,58 @@ def process_results(doc: dict, results: List[str]) -> Dict[str, int]:
                 answer = boxed_content
         except (AssertionError, IndexError):
             pass
+
+    return answer
+
+
+def extract_all_responses(
+    resps: List[List[str]], _docs: List[dict]
+) -> List[List[str]]:
+    """Extract an answer from every repeated generation."""
+    return [[extract_answer(response) for response in responses] for responses in resps]
+
+
+def avg_at_k(
+    references: List[str], predictions: List[List[str]], k: int | List[int]
+) -> Dict[str, float]:
+    """Average correctness over the first k generations for each document."""
+    if isinstance(k, int):
+        k = [k]
+    if len(references) != len(predictions):
+        raise ValueError(
+            "The number of references must match the number of prediction groups."
+        )
+    if not references:
+        raise ValueError("avg@k requires at least one reference.")
+
+    metrics = {}
+    for sample_count in k:
+        if sample_count <= 0:
+            raise ValueError("k must be a positive integer.")
+        if any(len(responses) < sample_count for responses in predictions):
+            raise ValueError(
+                f"avg@{sample_count} requires at least {sample_count} generations "
+                "per document. Increase the task's repeats value."
+            )
+
+        per_document_scores = [
+            sum(
+                is_equiv(prediction, reference)
+                for prediction in responses[:sample_count]
+            )
+            / sample_count
+            for reference, responses in zip(references, predictions, strict=True)
+        ]
+        metrics[f"avg@{sample_count}"] = sum(per_document_scores) / len(
+            per_document_scores
+        )
+
+    return metrics
+
+
+def process_results(doc: dict, results: List[str]) -> Dict[str, int]:
+    retval = 0
+    answer = extract_answer(results[0])
 
     # Check if answer matches target
     answer_key = next(k for k in doc.keys() if k.lower() == "answer")

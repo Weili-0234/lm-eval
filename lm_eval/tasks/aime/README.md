@@ -39,6 +39,7 @@
 * `aime`: `AIME 1983-2024 problems`
 * `aime24`: `AIME 2024 problems`
 * `aime25`: `AIME 2025 problems`
+* `aime25_avg4`: `AIME 2025 with four sampled generations per problem, reported as avg@4`
 
 ### Checklist
 
