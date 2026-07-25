@@ -14,10 +14,16 @@ Usage: run_qat_endpoint_benchmark.sh MODEL TASK [LIMIT]
 Models:
   qwen3-nvfp4 qwen35-nvfp4 qwen3-bf16 qwen35-bf16
   qwen3-q4k   qwen35-q4k
+  custom      (generic vLLM endpoint; requires env FAMILY={qwen3|qwen35},
+               MODEL_ALIAS, TOKENIZER, PORT_OVERRIDE, RESULT_TAG_OVERRIDE)
 
 Tasks:
-  ruler aime25_avg4 gpqa_diamond mmlu_pro humaneval ifeval
+  ruler ruler128k aime25_avg4 gpqa_diamond mmlu_pro humaneval ifeval
   pile_10k wikitext ppl
+
+ruler128k runs the three quantization-discriminative RULER tasks
+(ruler_qa_squad, niah_multikey_3, ruler_qa_hotpot) at a 131,072-token
+sequence length against a dedicated 128K server profile (131,328 capacity).
 
 LIMIT is an optional positive integer for smoke tests.
 EOF
@@ -81,6 +87,20 @@ case "${MODEL_KEY}" in
     RESULT_TAG=qwen3.5-9b-q4k
     TOKENIZER="${PROJECT_ROOT}/model-and-data/Qwen3.5-9B-BF16"
     ;;
+  custom)
+    # Generic vLLM endpoint for the standardized eval pipeline: identity comes
+    # entirely from the environment so any checkpoint/alias/port works.
+    FAMILY="${FAMILY:?custom model requires FAMILY=qwen3|qwen35}"
+    BACKEND=vllm
+    MODEL_ALIAS="${MODEL_ALIAS:?custom model requires MODEL_ALIAS}"
+    PORT="${PORT_OVERRIDE:?custom model requires PORT_OVERRIDE}"
+    RESULT_TAG="${RESULT_TAG_OVERRIDE:?custom model requires RESULT_TAG_OVERRIDE}"
+    TOKENIZER="${TOKENIZER:?custom model requires TOKENIZER (family BF16 tokenizer dir)}"
+    [[ "${FAMILY}" == qwen3 || "${FAMILY}" == qwen35 ]] || {
+      echo "FAMILY must be qwen3 or qwen35, got: ${FAMILY}" >&2
+      exit 2
+    }
+    ;;
   *)
     echo "Unknown model: ${MODEL_KEY}" >&2
     usage >&2
@@ -93,7 +113,7 @@ RESULT_TAG="${RESULT_TAG_OVERRIDE:-${RESULT_TAG}}"
 MMLU_TASKS="${MMLU_TASKS:-mmlu_pro}"
 
 case "${TASK_KEY}" in
-  ruler|aime25_avg4|gpqa_diamond|mmlu_pro)
+  ruler|ruler128k|aime25_avg4|gpqa_diamond|mmlu_pro)
     DEFAULT_CONCURRENT=8
     ;;
   humaneval)
@@ -159,12 +179,15 @@ COMMON_ARGS=(
   "${LIMIT_ARGS[@]}"
 )
 
+# 131072 for ruler128k; 32768 for everything else.
+COMPLETION_MAX_LENGTH=32768
+
 completion_model_args() {
   printf '%s' \
     "model=${MODEL_ALIAS},base_url=http://127.0.0.1:${PORT}/v1/completions," \
     "tokenizer=${TOKENIZER},tokenizer_backend=huggingface," \
     "tokenized_requests=False,num_concurrent=${NUM_CONCURRENT}," \
-    "timeout=${REQUEST_TIMEOUT},max_length=32768"
+    "timeout=${REQUEST_TIMEOUT},max_length=${COMPLETION_MAX_LENGTH}"
 }
 
 chat_model_args() {
@@ -248,6 +271,13 @@ echo "${MODEL_KEY}/${TASK_KEY}: num_concurrent=${NUM_CONCURRENT}, timeout=${REQU
 case "${TASK_KEY}" in
   ruler)
     run_completion ruler --metadata '{"max_seq_lengths":[32768]}'
+    ;;
+  ruler128k)
+    # Requires the dedicated 128K server profile (--max-model-len 131328;
+    # Qwen3 additionally needs official static YaRN 4x, Qwen3.5 does not).
+    COMPLETION_MAX_LENGTH=131072
+    run_completion ruler_qa_squad,niah_multikey_3,ruler_qa_hotpot \
+      --metadata '{"max_seq_lengths":[131072]}'
     ;;
   aime25_avg4)
     # -1 asks each server request to draw an independent random seed.
