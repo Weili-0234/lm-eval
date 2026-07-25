@@ -88,6 +88,10 @@ case "${MODEL_KEY}" in
     ;;
 esac
 
+PORT="${PORT_OVERRIDE:-${PORT}}"
+RESULT_TAG="${RESULT_TAG_OVERRIDE:-${RESULT_TAG}}"
+MMLU_TASKS="${MMLU_TASKS:-mmlu_pro}"
+
 case "${TASK_KEY}" in
   ruler|aime25_avg4|gpqa_diamond|mmlu_pro)
     DEFAULT_CONCURRENT=8
@@ -119,6 +123,10 @@ REQUEST_TIMEOUT="${REQUEST_TIMEOUT:-7200}"
   echo "REQUEST_TIMEOUT must be a positive integer." >&2
   exit 2
 }
+[[ "${PORT}" =~ ^[1-9][0-9]*$ ]] || {
+  echo "PORT_OVERRIDE must be a valid positive port number." >&2
+  exit 2
+}
 if [[ -n "${LIMIT}" && ! "${LIMIT}" =~ ^[1-9][0-9]*$ ]]; then
   echo "LIMIT must be a positive integer." >&2
   exit 2
@@ -134,17 +142,18 @@ fi
 }
 curl --max-time 5 -fsS "http://127.0.0.1:${PORT}/health" >/dev/null
 
-OUTPUT_SUFFIX="${TASK_KEY}"
+OUTPUT_SUFFIX="${OUTPUT_SUFFIX_OVERRIDE:-${TASK_KEY}}"
 LIMIT_ARGS=()
 if [[ -n "${LIMIT}" ]]; then
-  OUTPUT_SUFFIX="smoke/${TASK_KEY}-limit${LIMIT}"
+  OUTPUT_SUFFIX="smoke/${OUTPUT_SUFFIX}-limit${LIMIT}"
   LIMIT_ARGS=(--limit "${LIMIT}")
 fi
 
 COMMON_ARGS=(
   --batch_size 1
   --cache_requests refresh
-  --seed 0
+  # Endpoint evaluations are CPU-only; skip torch RNG initialization.
+  --seed 0,1234,None,1234
   --log_samples
   --output_path "${RESULTS_ROOT}/${RESULT_TAG}/${OUTPUT_SUFFIX}"
   "${LIMIT_ARGS[@]}"
@@ -173,19 +182,25 @@ generation_json() {
   if [[ "${FAMILY}" == qwen3 ]]; then
     case "${mode}" in
       thinking)
-        printf '{"do_sample":true,"temperature":0.6,"top_p":0.95,"top_k":20,"min_p":0.0,"max_gen_toks":%s,"chat_template_kwargs":{"enable_thinking":true}}' "${max_gen_toks}"
+        printf '{"do_sample":true,"temperature":0.6,"top_p":0.95,"top_k":20,"min_p":0.0,"presence_penalty":0.0,"max_gen_toks":%s,"chat_template_kwargs":{"enable_thinking":true}}' "${max_gen_toks}"
+        ;;
+      thinking-mmlu)
+        printf '{"do_sample":true,"temperature":0.6,"top_p":0.95,"top_k":20,"min_p":0.0,"presence_penalty":0.0,"max_gen_toks":%s,"until":["<|im_end|>"],"chat_template_kwargs":{"enable_thinking":true}}' "${max_gen_toks}"
         ;;
       nonthinking-coding)
-        printf '{"do_sample":true,"temperature":0.6,"top_p":0.95,"top_k":20,"min_p":0.0,"max_gen_toks":%s,"add_generation_prompt":false,"continue_final_message":true,"chat_template_kwargs":{"enable_thinking":false}}' "${max_gen_toks}"
+        printf '{"do_sample":true,"temperature":0.6,"top_p":0.95,"top_k":20,"min_p":0.0,"presence_penalty":0.0,"max_gen_toks":%s,"add_generation_prompt":false,"continue_final_message":true,"chat_template_kwargs":{"enable_thinking":false}}' "${max_gen_toks}"
         ;;
       nonthinking)
-        printf '{"do_sample":true,"temperature":0.7,"top_p":0.8,"top_k":20,"min_p":0.0,"max_gen_toks":%s,"chat_template_kwargs":{"enable_thinking":false}}' "${max_gen_toks}"
+        printf '{"do_sample":true,"temperature":0.7,"top_p":0.8,"top_k":20,"min_p":0.0,"presence_penalty":0.0,"max_gen_toks":%s,"chat_template_kwargs":{"enable_thinking":false}}' "${max_gen_toks}"
         ;;
     esac
   else
     case "${mode}" in
       thinking)
         printf '{"do_sample":true,"temperature":1.0,"top_p":0.95,"top_k":20,"min_p":0.0,"presence_penalty":1.5,"repetition_penalty":1.0,"max_gen_toks":%s,"chat_template_kwargs":{"enable_thinking":true}}' "${max_gen_toks}"
+        ;;
+      thinking-mmlu)
+        printf '{"do_sample":true,"temperature":1.0,"top_p":0.95,"top_k":20,"min_p":0.0,"presence_penalty":1.5,"repetition_penalty":1.0,"max_gen_toks":%s,"until":["<|im_end|>"],"chat_template_kwargs":{"enable_thinking":true}}' "${max_gen_toks}"
         ;;
       nonthinking-coding)
         printf '{"do_sample":true,"temperature":0.6,"top_p":0.95,"top_k":20,"min_p":0.0,"presence_penalty":0.0,"repetition_penalty":1.0,"max_gen_toks":%s,"add_generation_prompt":false,"continue_final_message":true,"chat_template_kwargs":{"enable_thinking":false}}' "${max_gen_toks}"
@@ -225,7 +240,7 @@ run_completion() {
     "${COMMON_ARGS[@]}"
 }
 
-export HF_HOME TOKENIZERS_PARALLELISM=false
+export HF_HOME TOKENIZERS_PARALLELISM=false CUDA_VISIBLE_DEVICES="" USE_TORCH=0
 cd "${HARNESS_ROOT}"
 mkdir -p "${RESULTS_ROOT}/${RESULT_TAG}/$(dirname -- "${OUTPUT_SUFFIX}")"
 echo "${MODEL_KEY}/${TASK_KEY}: num_concurrent=${NUM_CONCURRENT}, timeout=${REQUEST_TIMEOUT}s"
@@ -242,7 +257,16 @@ case "${TASK_KEY}" in
     run_chat gpqa_diamond_cot_zeroshot thinking 30000
     ;;
   mmlu_pro)
-    run_chat mmlu_pro thinking 8192
+    if [[ "${FAMILY}" == qwen35 ]]; then
+      # Qwen3.5 frequently needs more than 8K thinking tokens before its final
+      # choice. The largest measured five-shot prompt is 2,738 tokens, so 30K
+      # generation remains within the 33,024-token serving limit. Override the
+      # task's "Question:" stop string because Qwen3.5 naturally emits phrases
+      # such as "Analyze the Question:" during reasoning.
+      run_chat "${MMLU_TASKS}" thinking-mmlu 30000
+    else
+      run_chat "${MMLU_TASKS}" thinking-mmlu 8192
+    fi
     ;;
   humaneval)
     export HF_ALLOW_CODE_EVAL=1

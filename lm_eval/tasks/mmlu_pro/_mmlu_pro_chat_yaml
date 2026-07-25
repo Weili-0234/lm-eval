@@ -1,0 +1,36 @@
+dataset_path: TIGER-Lab/MMLU-Pro
+# Pinned to the revision recorded in mmlu-pro-chat-subsample-1000-seed-1234.json;
+# the frozen 1,000-question subset selects rows by category_index and validates
+# question_id, so a revision change fails loudly instead of silently drifting.
+dataset_kwargs:
+  revision: b189ec765aa7ed75c8acfea42df31fdae71f97be
+test_split: test
+fewshot_split: validation
+fewshot_config:
+  sampler: first_n
+  doc_to_text: !function utils_chat.doc_to_text
+  doc_to_target: !function utils_chat.fewshot_doc_to_target
+output_type: generate_until
+doc_to_text: !function utils_chat.doc_to_text
+doc_to_target: answer
+filter_list:
+  - name: "custom-extract"
+    filter:
+      - function: "regex"
+        regex_pattern: 'answer is \(?([ABCDEFGHIJ])\)?'
+      - function: "take_first"
+generation_kwargs:
+  until: []
+  max_gen_toks: 4096
+  do_sample: true
+# Standardized protocol is 0-shot chat (docs/007 handoff); the validated
+# Qwen3.5-9B BF16 artifact resolved to num_fewshot: 0.
+num_fewshot: 0
+metric_list:
+  - metric: exact_match
+    aggregation: mean
+    higher_is_better: true
+    ignore_case: true
+    ignore_punctuation: true
+metadata:
+  version: 1.0

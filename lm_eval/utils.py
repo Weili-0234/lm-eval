@@ -41,6 +41,9 @@ class _LMEvalFormatter(logging.Formatter):
 
 
 def is_torch_available() -> bool:
+    use_torch = os.environ.get("USE_TORCH", "AUTO").upper()
+    if use_torch in {"0", "OFF", "FALSE", "NO"}:
+        return False
     return importlib.util.find_spec("torch") is not None
 
 
