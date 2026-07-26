@@ -1,6 +1,9 @@
 task: wikitext
 dataset_path: EleutherAI/wikitext_document_level
 dataset_name: wikitext-2-raw-v1
+dataset_kwargs:
+  # Pinned 2026-07-26 (standardized protocol: no floating dataset revisions).
+  revision: 647234772b9554e208af6c826f23b99e3cac88c8
 output_type: loglikelihood_rolling
 training_split: train
 validation_split: validation

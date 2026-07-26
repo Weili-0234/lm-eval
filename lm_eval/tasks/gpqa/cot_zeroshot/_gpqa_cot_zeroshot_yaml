@@ -1,4 +1,8 @@
 dataset_path: Idavidrein/gpqa
+dataset_kwargs:
+  # Pinned 2026-07-26: an upstream row edit/reorder would silently change the
+  # measured questions AND reshuffle every answer letter via the RNG draws.
+  revision: 633f5ee89ab8ad4522a9f850766b73f62147ffdd
 tag: gpqa
 output_type: generate_until
 process_docs: !function utils.process_docs

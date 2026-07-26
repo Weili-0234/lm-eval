@@ -2,6 +2,9 @@ tag:
   - math_word_problems
 task: aime25_avg4
 dataset_path: math-ai/aime25
+dataset_kwargs:
+  # Pinned 2026-07-26 (standardized protocol: no floating dataset revisions).
+  revision: 563bb8404243c5f09de6ec262f2db674fe5bce9b
 output_type: generate_until
 training_split: test
 fewshot_split: test

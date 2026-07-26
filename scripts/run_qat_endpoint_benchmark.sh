@@ -7,6 +7,26 @@ LM_EVAL="${LM_EVAL:-${PROJECT_ROOT}/envs/lm-eval/bin/lm-eval}"
 RESULTS_ROOT="${RESULTS_ROOT:-${HARNESS_ROOT}/results/endpoint}"
 HF_HOME="${HF_HOME:-${PROJECT_ROOT}/cache/huggingface}"
 
+# Provenance guards: a formal run must come from a clean checkout of the pinned
+# harness commit. Uncommitted edits under lm_eval/ or scripts/ silently change
+# task definitions, subsets, or invocation args while every check still passes.
+HARNESS_SHA="$(git -C "${HARNESS_ROOT}" rev-parse --short=8 HEAD 2>/dev/null || echo unknown)"
+export HARNESS_SHA
+if [[ -n "$(git -C "${HARNESS_ROOT}" status --porcelain -- lm_eval scripts 2>/dev/null)" \
+      && "${HARNESS_DIRTY_OK:-0}" != "1" ]]; then
+  echo "Harness working tree is dirty under lm_eval/ or scripts/ (${HARNESS_ROOT})." >&2
+  echo "Commit + push the change and bump the skill's SHA pin instead of running from" >&2
+  echo "a local patch. Set HARNESS_DIRTY_OK=1 only for a deliberate run that will be" >&2
+  echo "filed with a 'deviation:' note." >&2
+  exit 2
+fi
+if [[ -n "${EXPECTED_HARNESS_SHA:-}" \
+      && "${EXPECTED_HARNESS_SHA}" != "${HARNESS_SHA}"* \
+      && "${HARNESS_SHA}" != "${EXPECTED_HARNESS_SHA}"* ]]; then
+  echo "Harness checkout ${HARNESS_SHA} does not match EXPECTED_HARNESS_SHA=${EXPECTED_HARNESS_SHA}." >&2
+  exit 2
+fi
+
 usage() {
   cat <<'EOF'
 Usage: run_qat_endpoint_benchmark.sh MODEL TASK [LIMIT]
@@ -100,6 +120,25 @@ case "${MODEL_KEY}" in
       echo "FAMILY must be qwen3 or qwen35, got: ${FAMILY}" >&2
       exit 2
     }
+    # FAMILY selects the entire sampling recipe, the MMLU-Pro generation
+    # budget, and 128K rope handling. When the caller can point at the served
+    # checkpoint (MODEL_PATH), verify the assertion against its config.json
+    # instead of trusting a hand-typed value (qwen3_5 -> qwen35; qwen3 -> qwen3).
+    if [[ -n "${MODEL_PATH:-}" && -f "${MODEL_PATH}/config.json" ]]; then
+      CFG_FAMILY="$(python3 -c '
+import json, sys
+mt = json.load(open(sys.argv[1])).get("model_type", "")
+if "qwen3_5" in mt or "qwen3.5" in mt:
+    print("qwen35")
+elif mt.startswith("qwen3"):
+    print("qwen3")
+else:
+    print("unknown")' "${MODEL_PATH}/config.json")"
+      if [[ "${CFG_FAMILY}" != "unknown" && "${CFG_FAMILY}" != "${FAMILY}" ]]; then
+        echo "FAMILY=${FAMILY} contradicts ${MODEL_PATH}/config.json (model_type => ${CFG_FAMILY})." >&2
+        exit 2
+      fi
+    fi
     ;;
   *)
     echo "Unknown model: ${MODEL_KEY}" >&2
@@ -110,7 +149,16 @@ esac
 
 PORT="${PORT_OVERRIDE:-${PORT}}"
 RESULT_TAG="${RESULT_TAG_OVERRIDE:-${RESULT_TAG}}"
-MMLU_TASKS="${MMLU_TASKS:-mmlu_pro}"
+# Standardized protocol: the frozen, revision-pinned 1k chat subset. The
+# legacy full-12k 5-shot group must be an explicit, labeled deviation — never
+# a forgotten env var (it exits 0 and files under the same output name).
+MMLU_TASKS="${MMLU_TASKS:-mmlu_pro_chat}"
+if [[ "${MMLU_TASKS}" != "mmlu_pro_chat" && "${MMLU_TASKS_LEGACY_OK:-0}" != "1" ]]; then
+  echo "MMLU_TASKS=${MMLU_TASKS} is not the standardized mmlu_pro_chat subset." >&2
+  echo "Set MMLU_TASKS_LEGACY_OK=1 only for a deliberate legacy run filed with a" >&2
+  echo "'deviation:' note." >&2
+  exit 2
+fi
 
 case "${TASK_KEY}" in
   ruler|ruler128k|aime25_avg4|gpqa_diamond|mmlu_pro)
@@ -160,6 +208,18 @@ fi
   echo "Tokenizer directory not found: ${TOKENIZER}" >&2
   exit 1
 }
+# The tokenizer identity shapes PPL rolling-loglikelihood windows and the
+# RULER 131,072-token haystacks. When the caller pins a content hash, assert
+# it — a directory path alone does not identify a tokenizer.
+if [[ -n "${TOKENIZER_SHA256:-}" ]]; then
+  ACTUAL_TOK_SHA="$(sha256sum "${TOKENIZER}/tokenizer.json" | cut -d' ' -f1)"
+  [[ "${ACTUAL_TOK_SHA}" == "${TOKENIZER_SHA256}" ]] || {
+    echo "tokenizer.json sha256 mismatch at ${TOKENIZER}:" >&2
+    echo "  expected ${TOKENIZER_SHA256}" >&2
+    echo "  actual   ${ACTUAL_TOK_SHA}" >&2
+    exit 2
+  }
+fi
 curl --max-time 5 -fsS "http://127.0.0.1:${PORT}/health" >/dev/null
 
 OUTPUT_SUFFIX="${OUTPUT_SUFFIX_OVERRIDE:-${TASK_KEY}}"

@@ -81,7 +81,9 @@ async def get_essays() -> Dict[str, str]:
     h.reference_links = False
     h.mark_code = False
 
-    url_list = "https://raw.githubusercontent.com/NVIDIA/RULER/main/scripts/data/synthetic/json/PaulGrahamEssays_URLs.txt"
+    # Pinned to a commit (2026-07-26) — `main` floats and can change the
+    # essay list, i.e. the niah haystack text itself.
+    url_list = "https://raw.githubusercontent.com/NVIDIA/RULER/c3f5e3b4f87f97e048793bb510a3a6b19a46bf3a/scripts/data/synthetic/json/PaulGrahamEssays_URLs.txt"
 
     async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
         # Fetch URL list

@@ -1,6 +1,9 @@
 task: ifeval
 dataset_path: google/IFEval
 dataset_name: null
+dataset_kwargs:
+  # Pinned 2026-07-26 (standardized protocol: no floating dataset revisions).
+  revision: 966cd89545d6b6acfd7638bc708b98261ca58e84
 output_type: generate_until
 test_split: train
 num_fewshot: 0

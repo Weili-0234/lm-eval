@@ -1,6 +1,9 @@
 task: pile_10k
 dataset_path: NeelNanda/pile-10k
 dataset_name: null
+dataset_kwargs:
+  # Pinned 2026-07-26 (standardized protocol: no floating dataset revisions).
+  revision: 127bfedcd5047750df5ccf3a12979a47bfa0bafa
 output_type: loglikelihood_rolling
 test_split: train
 doc_to_text: ""
