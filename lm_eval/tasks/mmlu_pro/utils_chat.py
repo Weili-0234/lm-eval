@@ -88,6 +88,12 @@ def process_docs_subset(dataset, subject):
     filtered = dataset.filter(lambda x: x["category"] == subject)
     if not _subset_enabled():
         return filtered
+    # The harness also applies process_docs to the fewshot (validation) split
+    # (task.py fewshot_docs); the frozen manifest only indexes the test split.
+    # Validation has 5 rows/category vs ~700+ in test — pass small splits
+    # through untouched instead of exploding with category_index errors.
+    if len(filtered) < 100:
+        return filtered
     _, per_category = _load_manifest()
     items = sorted(
         per_category.get(subject, []), key=lambda it: it["category_index"]
