@@ -124,6 +124,12 @@ case "${MODEL_KEY}" in
     # budget, and 128K rope handling. When the caller can point at the served
     # checkpoint (MODEL_PATH), verify the assertion against its config.json
     # instead of trusting a hand-typed value (qwen3_5 -> qwen35; qwen3 -> qwen3).
+    if [[ -n "${MODEL_PATH:-}" && ! -f "${MODEL_PATH}/config.json" ]]; then
+      echo "MODEL_PATH is set but ${MODEL_PATH}/config.json does not exist —" >&2
+      echo "cannot verify FAMILY. Fix MODEL_PATH (or unset it for a hub-served" >&2
+      echo "model you cannot point at locally)." >&2
+      exit 2
+    fi
     if [[ -n "${MODEL_PATH:-}" && -f "${MODEL_PATH}/config.json" ]]; then
       CFG_FAMILY="$(python3 -c '
 import json, sys
@@ -151,9 +157,12 @@ PORT="${PORT_OVERRIDE:-${PORT}}"
 RESULT_TAG="${RESULT_TAG_OVERRIDE:-${RESULT_TAG}}"
 # Standardized protocol: the frozen, revision-pinned 1k chat subset. The
 # legacy full-12k 5-shot group must be an explicit, labeled deviation — never
-# a forgotten env var (it exits 0 and files under the same output name).
+# a forgotten env var (it exits 0 and files under the same output name). The
+# guard fires only when the knob is actually consumed (TASK_KEY=mmlu_pro), so
+# a stale exported value cannot block unrelated tasks.
 MMLU_TASKS="${MMLU_TASKS:-mmlu_pro_chat}"
-if [[ "${MMLU_TASKS}" != "mmlu_pro_chat" && "${MMLU_TASKS_LEGACY_OK:-0}" != "1" ]]; then
+if [[ "${TASK_KEY}" == "mmlu_pro" && "${MMLU_TASKS}" != "mmlu_pro_chat" \
+      && "${MMLU_TASKS_LEGACY_OK:-0}" != "1" ]]; then
   echo "MMLU_TASKS=${MMLU_TASKS} is not the standardized mmlu_pro_chat subset." >&2
   echo "Set MMLU_TASKS_LEGACY_OK=1 only for a deliberate legacy run filed with a" >&2
   echo "'deviation:' note." >&2

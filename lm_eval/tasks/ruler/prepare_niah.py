@@ -329,7 +329,13 @@ def get_haystack(
 ) -> Union[list[str], str]:
     NEEDLE = "One of the special magic {type_needle_v} for {key} is: {value}."
     if type_haystack == "essay":
-        essay = datasets.load_dataset("baber/paul_graham_essays", split="train")["text"]
+        # Revision pinned 2026-07-26: this dataset IS the niah essay haystack;
+        # an upstream edit would silently change every essay-haystack context.
+        essay = datasets.load_dataset(
+            "baber/paul_graham_essays",
+            split="train",
+            revision="792d672b77d1a67720f7e9820d646358fc18792e",
+        )["text"]
         essay = " ".join(essay)
         haystack = re.sub(r"\s+", " ", essay).split(" ")
     elif type_haystack == "repeat":

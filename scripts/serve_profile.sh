@@ -25,7 +25,9 @@ Usage: serve_profile.sh MODEL_PATH FAMILY DTYPE PROFILE PORT [GPUS]
   GPUS        CUDA_VISIBLE_DEVICES value (default: 0); N comma-separated GPUs
               enable --tensor-parallel-size N
 
-Env: VLLM (vllm binary, default `vllm` on PATH), SERVE_LOG (log file path).
+Env: VLLM (vllm binary, default `vllm` on PATH), SERVE_LOG (log file path),
+     SERVED_NAME (--served-model-name; default basename(MODEL_PATH) — must
+     equal the runner's MODEL_ALIAS or every request 404s).
 EOF
 }
 
@@ -71,15 +73,25 @@ else:
     has_act = any((g or {}).get("input_activations") for g in qc.get("config_groups", {}).values())
     print("w4a4" if has_act else "w4a16")' "${MODEL_PATH}/config.json")"
 if [[ "${SCHEMA_DTYPE}" != "${DTYPE}" ]]; then
-  echo "DTYPE=${DTYPE} contradicts the checkpoint schema (=> ${SCHEMA_DTYPE}):" >&2
-  echo "  w4a4 needs an activation-quantized (A4) schema export; w4a16 needs the" >&2
-  echo "  weight-only schema export; bf16 needs no quantization_config." >&2
-  exit 2
+  # One legitimate mismatch: an A4-schema export served as w4a16 on SM90
+  # (H100 has no FP4-activation kernels, so vLLM realizes weight-only there —
+  # the label matches what actually runs). Everything else is a mislabel.
+  COMPUTE_CAP="$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null | head -1 || true)"
+  if [[ "${DTYPE}" == "w4a16" && "${SCHEMA_DTYPE}" == "w4a4" && "${COMPUTE_CAP}" == 9.* ]]; then
+    echo "note: w4a16 realized via SM90 hardware fallback on an A4-schema export" >&2
+  else
+    echo "DTYPE=${DTYPE} contradicts the checkpoint schema (=> ${SCHEMA_DTYPE}):" >&2
+    echo "  w4a4 needs an activation-quantized (A4) schema export; w4a16 needs the" >&2
+    echo "  weight-only schema export (or SM90 hardware fallback); bf16 needs no" >&2
+    echo "  quantization_config." >&2
+    exit 2
+  fi
 fi
 
+SERVED_NAME="${SERVED_NAME:-$(basename "${MODEL_PATH}")}"
 CMD=("${VLLM_BIN}" serve "${MODEL_PATH}"
      --host 127.0.0.1 --port "${PORT}"
-     --served-model-name "$(basename "${MODEL_PATH}")"
+     --served-model-name "${SERVED_NAME}"
      --max-model-len "${MAX_LEN}"
      --gpu-memory-utilization 0.85
      --generation-config vllm
@@ -93,7 +105,24 @@ if [[ "${PROFILE}" == 128k && "${FAMILY}" == qwen3 ]]; then
   CMD+=(--rope-scaling '{"rope_type":"yarn","factor":4.0,"original_max_position_embeddings":32768}')
 fi
 
-SIDECAR="$(dirname "${SERVE_LOG:-./serve.log}")/serving-manual-p${PORT}.json"
+# Mirror the two engine-env mitigations Slot.start_server applies — without
+# them the mandated manual path reintroduces both documented silent
+# engine-death modes:
+# 1. FlashInfer's JIT spawns bare `ninja`; if vllm lives in a venv, its bin
+#    dir must be on PATH or the engine core dies with "Failed core proc(s)".
+if [[ "${VLLM_BIN}" == */* ]]; then
+  export PATH="$(cd "$(dirname "${VLLM_BIN}")" && pwd)${PATH:+:${PATH}}"
+fi
+# 2. Concurrent engines sharing one compile/autotune cache (or MXFP4/NVFP4
+#    models sharing tuned-kernel entries) silently crash the engine core —
+#    isolate the cache per (model, port).
+RUN_DIR="$(dirname "${SERVE_LOG:-/tmp/serve_profile.log}")"
+export VLLM_CACHE_ROOT="${RUN_DIR}/vllm-cache-$(basename "${MODEL_PATH}")-p${PORT}"
+mkdir -p "${VLLM_CACHE_ROOT}"
+
+# Keep the sidecar out of the harness working tree (a stray file under
+# scripts/ would trip the runner's dirty-checkout guard).
+SIDECAR="${RUN_DIR}/serving-manual-p${PORT}.json"
 python3 -c '
 import json, subprocess, sys
 model_path, family, dtype, profile, port, gpus, vllm_bin, sidecar = sys.argv[1:9]
