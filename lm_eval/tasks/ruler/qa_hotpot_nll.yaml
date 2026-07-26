@@ -1,0 +1,4 @@
+include: niah_multikey_3_nll.yaml
+task: ruler_qa_hotpot_nll
+custom_dataset: !function nll_utils.qa_hotpot_nll
+doc_to_target: !function nll_utils.target_first

@@ -1,0 +1,4 @@
+include: niah_multikey_3_nll.yaml
+task: ruler_vt_nll
+custom_dataset: !function nll_utils.vt_nll
+doc_to_target: !function nll_utils.target_join
