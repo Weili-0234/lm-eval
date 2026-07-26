@@ -39,11 +39,18 @@ Models:
 
 Tasks:
   ruler ruler128k aime25_avg4 gpqa_diamond mmlu_pro humaneval ifeval
-  pile_10k wikitext ppl
+  pile_10k wikitext ppl ruler_nll longbench_v2_nll
 
 ruler128k runs the three quantization-discriminative RULER tasks
 (ruler_qa_squad, niah_multikey_3, ruler_qa_hotpot) at a 131,072-token
 sequence length against a dedicated 128K server profile (131,328 capacity).
+
+ruler_nll runs the Panel A gold-answer NLL ladder (niah_multikey_3_nll,
+ruler_vt_nll, ruler_qa_hotpot_nll at 32k/65k/131k) on the frozen document
+set; requires the 128K server profile and RULER_NLL_DATA pointing at the
+artifact from scripts/freeze_ruler_nll.py. longbench_v2_nll scores the
+revision-pinned LongBench v2 by choice-NLL under the official 0-shot prompt
+and middle truncation; it also requires the 128K profile.
 
 LIMIT is an optional positive integer for smoke tests.
 EOF
@@ -178,6 +185,11 @@ case "${TASK_KEY}" in
     ;;
   ifeval|pile_10k|wikitext|ppl)
     DEFAULT_CONCURRENT=32
+    ;;
+  ruler_nll|longbench_v2_nll)
+    # echo-logprobs responses carry one entry per prompt token (~131k), so
+    # keep few requests in flight
+    DEFAULT_CONCURRENT=4
     ;;
   *)
     echo "Unknown task: ${TASK_KEY}" >&2
@@ -347,6 +359,25 @@ case "${TASK_KEY}" in
     COMPLETION_MAX_LENGTH=131072
     run_completion ruler_qa_squad,niah_multikey_3,ruler_qa_hotpot \
       --metadata '{"max_seq_lengths":[131072]}'
+    ;;
+  ruler_nll)
+    # Panel A gold-answer NLL ladder on FROZEN docs (mk3 uuid4 needles and
+    # unseeded vt chains regenerate differently per invocation, so ad-hoc
+    # generation breaks paired per-row deltas). 128K server profile.
+    [[ -n "${RULER_NLL_DATA:-}" && -f "${RULER_NLL_DATA}/MANIFEST.json" ]] || {
+      echo "ruler_nll requires RULER_NLL_DATA -> dir from scripts/freeze_ruler_nll.py" >&2
+      exit 2
+    }
+    COMPLETION_MAX_LENGTH=131328
+    run_completion niah_multikey_3_nll,ruler_vt_nll,ruler_qa_hotpot_nll \
+      --metadata "{\"tokenizer\":\"${TOKENIZER}\"}"
+    ;;
+  longbench_v2_nll)
+    # Choice-NLL over the revision-pinned LongBench v2 with the official
+    # middle truncation (LB2_PROMPT_TOKENS, default 130560). 128K profile.
+    COMPLETION_MAX_LENGTH=131328
+    run_completion longbench_v2_nll \
+      --metadata "{\"tokenizer\":\"${TOKENIZER}\"}"
     ;;
   aime25_avg4)
     # -1 asks each server request to draw an independent random seed.
