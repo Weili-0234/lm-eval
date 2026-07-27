@@ -20,7 +20,7 @@ Usage: serve_profile.sh MODEL_PATH FAMILY DTYPE PROFILE PORT [GPUS]
   DTYPE       bf16 | w4a4 | w4a16   (verified against quantization_config:
               w4a4 requires input_activations in the schema; w4a16 requires a
               weight-only schema; bf16 requires no quantization_config)
-  PROFILE     32k | ppl-safe | 128k
+  PROFILE     32k | ppl-safe | 64k | 128k
   PORT        TCP port to serve on
   GPUS        CUDA_VISIBLE_DEVICES value (default: 0); N comma-separated GPUs
               enable --tensor-parallel-size N
@@ -42,8 +42,10 @@ VLLM_BIN="${VLLM:-vllm}"
 case "${PROFILE}" in
   32k)      MAX_LEN=33024;  BATCHED=8192 ;;
   ppl-safe) MAX_LEN=33024;  BATCHED=4096 ;;
+  # AIME protocol v2: 64000 gen + <=1k prompt/template + headroom.
+  64k)      MAX_LEN=66560;  BATCHED=8192 ;;
   128k)     MAX_LEN=131328; BATCHED=8192 ;;
-  *) echo "PROFILE must be 32k|ppl-safe|128k" >&2; exit 2 ;;
+  *) echo "PROFILE must be 32k|ppl-safe|64k|128k" >&2; exit 2 ;;
 esac
 
 # family <-> config.json model_type

@@ -381,7 +381,9 @@ case "${TASK_KEY}" in
     ;;
   aime25_avg4)
     # -1 asks each server request to draw an independent random seed.
-    run_chat aime25_avg4 thinking 30000 -1
+    # AIME protocol v2: AIME25_MAX_GEN_TOKS=64000 (needs the 64k serve
+    # profile). Default 30000 is the v1 budget; never mix v1/v2 rows.
+    run_chat aime25_avg4 thinking "${AIME25_MAX_GEN_TOKS:-30000}" -1
     ;;
   gpqa_diamond)
     run_chat gpqa_diamond_cot_zeroshot thinking 30000
