@@ -381,9 +381,22 @@ case "${TASK_KEY}" in
     ;;
   aime25_avg4)
     # -1 asks each server request to draw an independent random seed.
-    # AIME protocol v2: AIME25_MAX_GEN_TOKS=64000 (needs the 64k serve
-    # profile). Default 30000 is the v1 budget; never mix v1/v2 rows.
-    run_chat aime25_avg4 thinking "${AIME25_MAX_GEN_TOKS:-30000}" -1
+    # AIME protocol v2 (2026-07-27): 64,000-token generations, 64k serve
+    # profile. The v1 30k budget censored 28-94% of generations (truncation
+    # mid-<think> scores 0); setting AIME25_MAX_GEN_TOKS=30000 reproduces v1
+    # rows only as an explicit, labeled deviation. Never mix v1/v2 rows.
+    AIME_GEN="${AIME25_MAX_GEN_TOKS:-64000}"
+    # Guard: the serve profile must fit prompt + generation, or vLLM 400s
+    # every over-length request late in the run.
+    SRV_MAX_LEN="$(curl -fsS --max-time 10 "http://127.0.0.1:${PORT}/v1/models" \
+      | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"][0].get("max_model_len", 0))' \
+      || echo 0)"
+    if [[ "${SRV_MAX_LEN}" -lt $((AIME_GEN + 1024)) ]]; then
+      echo "server max_model_len=${SRV_MAX_LEN} < AIME gen ${AIME_GEN}+1024 headroom;" >&2
+      echo "serve the 64k profile (66,560) for AIME protocol v2." >&2
+      exit 2
+    fi
+    run_chat aime25_avg4 thinking "${AIME_GEN}" -1
     ;;
   gpqa_diamond)
     run_chat gpqa_diamond_cot_zeroshot thinking 30000
