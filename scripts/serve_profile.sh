@@ -101,6 +101,11 @@ CMD=("${VLLM_BIN}" serve "${MODEL_PATH}"
 NGPU="$(awk -F, '{print NF}' <<<"${GPUS}")"
 [[ "${NGPU}" -gt 1 ]] && CMD+=(--tensor-parallel-size "${NGPU}")
 [[ "${DTYPE}" == bf16 ]] && CMD+=(--dtype bfloat16)
+# Optional function-calling endpoints (BFCL-v4 et al.): TOOLS=1 appends vLLM
+# auto tool-choice with TOOL_PARSER (default hermes = Qwen3/Qwen3.5 format).
+if [[ "${TOOLS:-0}" == "1" ]]; then
+  CMD+=(--enable-auto-tool-choice --tool-call-parser "${TOOL_PARSER:-hermes}")
+fi
 if [[ "${PROFILE}" == 128k && "${FAMILY}" == qwen3 ]]; then
   # Qwen3-8B native context is 32K; official static YaRN 4x. Qwen3.5 is
   # 262K-native and must NOT get rope-scaling.
