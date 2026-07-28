@@ -108,7 +108,14 @@ NGPU="$(awk -F, '{print NF}' <<<"${GPUS}")"
 # silently collapses to the irrelevance-category fraction (all rows score an
 # identical 1124/4441 = 25.31 on BFCL-v4).
 if [[ "${TOOLS:-0}" == "1" ]]; then
-  CMD+=(--enable-auto-tool-choice --tool-call-parser "${TOOL_PARSER:-hermes}"
+  # Family-aware default: Qwen3.5 emits XML-style calls
+  # (<function=NAME><parameter=K>V</parameter></function>) -> qwen3_xml;
+  # Qwen3 emits hermes JSON (<tool_call>{...}</tool_call>) -> hermes.
+  TP="${TOOL_PARSER:-}"
+  if [[ -z "${TP}" ]]; then
+    if [[ "${FAMILY}" == qwen35 ]]; then TP=qwen3_xml; else TP=hermes; fi
+  fi
+  CMD+=(--enable-auto-tool-choice --tool-call-parser "${TP}"
         --reasoning-parser "${REASONING_PARSER:-qwen3}")
 fi
 if [[ "${PROFILE}" == 128k && "${FAMILY}" == qwen3 ]]; then
